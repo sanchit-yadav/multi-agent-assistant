@@ -11,13 +11,13 @@
 
 
 ## 🚀 Live Demo
-[Click here to view the deployed project](https://multi-agent-assistant-nr79zhumybh9pkgefwlyi3.streamlit.app/)
+[Click here to view the deployed project](https://multi-agent-assistant-usdkhb6dm4jyuveuzsuft3.streamlit.app/)
 
 ---
 
 ## 🎥 Demo
 
-![](./demo.gif)
+![](Demo/demo.gif)
 
 ---
 
