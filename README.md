@@ -9,6 +9,10 @@
 ![SQLite](https://img.shields.io/badge/Memory-SQLite-lightgrey?logo=sqlite)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
+
+## 🚀 Live Demo
+[Click here to view the deployed project](https://multi-agent-assistant-nr79zhumybh9pkgefwlyi3.streamlit.app/)
+
 ---
 
 ## 🎥 Demo
@@ -75,7 +79,7 @@ Groq fails → auto-switch to Gemini → log error → continue seamlessly
 | 🔍 Research | Gemini 2.5 Flash | Tavily Search | Live web research, summaries, analysis |
 | 📅 Calendar | Groq Llama 3.3 | Google Calendar API | Create events, list schedule |
 | ✈️ Travel | Groq Llama 3.3 | OpenStreetMap | Itineraries, location lookup, nearby places |
-| 🧭 Orchestrator | Gemini 2.5 Flash | — | Intent classification, agent routing |
+| 🧭 Orchestrator | Groq Llama 3.3 | — | Intent classification, agent routing |
 
 ---
 
@@ -86,7 +90,7 @@ Groq fails → auto-switch to Gemini → log error → continue seamlessly
 | Language | Python 3.10+ |
 | UI | Streamlit |
 | LLM (Agents) | Groq — Llama 3.3 70B Versatile |
-| LLM (Orchestrator + Research) | Google Gemini 2.5 Flash |
+| LLM (Orchestrator + Research) | Groq Llama 3.3 / Gemini 2.5 Flash |
 | LLM Fallback | Groq ↔ Gemini auto-switch |
 | Email | Gmail API (OAuth2) |
 | Calendar | Google Calendar API (OAuth2) |
@@ -100,7 +104,7 @@ Groq fails → auto-switch to Gemini → log error → continue seamlessly
 
 ### 1. Clone the repo
 ```bash
-git clone https://github.com/YOUR_USERNAME/multi-agent-assistant.git
+git clone https://github.com/sanchit-yadav/multi-agent-assistant
 cd multi-agent-assistant
 ```
 

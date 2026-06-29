@@ -1,5 +1,6 @@
 import json
 import google.generativeai as genai
+from core.config import groq_client, GROQ_MODEL
 from agents.email_agent    import EmailAgent
 from agents.research_agent import ResearchAgent
 from agents.calendar_agent import CalendarAgent
@@ -25,13 +26,19 @@ class Orchestrator:
             "calendar": CalendarAgent(),
             "travel":   TravelAgent(),
         }
-        self.router = genai.GenerativeModel("gemini-2.5-flash")
 
     def detect_agent(self, message: str) -> tuple:
-        response = self.router.generate_content(
-            f"{ROUTE_PROMPT}\n\nUser message: {message}"
+        response = groq_client.chat.completions.create(
+            model       = GROQ_MODEL,
+            messages    = [
+                {"role": "system", "content": ROUTE_PROMPT},
+                {"role": "user",   "content": message}
+            ],
+            temperature = 0.1,
+            max_tokens  = 60,
         )
-        raw = response.text.strip().replace("```json", "").replace("```", "").strip()
+        raw = response.choices[0].message.content.strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
         try:
             data = json.loads(raw)
             return data.get("agent", "research"), data.get("reason", "")
