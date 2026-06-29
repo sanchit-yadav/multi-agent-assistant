@@ -1,0 +1,10 @@
+groq
+google-generativeai
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
+tavily-python
+requests
+python-dotenv
+streamlit
+pandas
