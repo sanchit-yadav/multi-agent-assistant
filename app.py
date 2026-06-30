@@ -74,7 +74,7 @@ st.info(
     "Gmail/Calendar credentials for privacy and safety reasons. The Email and Calendar "
     "agents will draft content correctly, but real send/create actions require **your own** "
     "`GROQ_API_KEY`, `GEMINI_API_KEY`, `TAVILY_API_KEY`, and Google OAuth `credentials.json` — "
-    "see the [GitHub README](https://github.com/) to run it locally with full functionality.",
+    "see the [GitHub README](https://github.com/sanchit-yadav/multi-agent-assistant/blob/main/README.md) to run it locally with full functionality.",
     icon="ℹ️",
 )
 
