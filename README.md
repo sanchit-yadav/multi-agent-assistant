@@ -12,13 +12,20 @@
 
 
 ## 🚀 Live Demo
-[Click here to view the deployed project](https://multi-agent-assistant-usdkhb6dm4jyuveuzsuft3.streamlit.app/)
+[Click here to view the deployed project](https://multi-agent-assistant-oxdrukcj9xtapruvcettv5.streamlit.app/)
 
 ---
 
 ## 🎥 Demo
 
-![](Demo/demo.gif)
+### Agent Collaboration
+![Collaborate demo](Demo/demo-collaborate.gif)
+
+### Real-time Streaming
+![Streaming demo](Demo/demo-streaming.gif)
+
+### Logs Dashboard
+![Dashboard demo](Demo/demo-dashboard.gif)
 
 
 **⚠️ Demo deployment notice:** The public Streamlit Cloud link does **not** use the developer's personal Gmail/Calendar credentials. Email and Calendar agents draft content correctly, but real send/create actions require your own API keys and Google OAuth setup — see [Quick Start](#-quick-start) below.
@@ -27,21 +34,22 @@
 
 ## 🏗️ Architecture
 
+
 ```
 User Input
     │
     ▼
-┌──────────────────────────────────┐
+┌───────────────────────────────────┐
 │  Guardrails (core/guardrails.py)  │  ← blocks empty/oversized/injection input
 └──────┬────────────────────────────┘
        ▼
-┌──────────────────────────────────┐
+┌───────────────────────────────────┐
 │  Rate Limiter (core/rate_limiter) │  ← 15 msgs/session, 5 msgs/min per browser
 └──────┬────────────────────────────┘
        ▼
-┌──────────────────────────────────┐
+┌───────────────────────────────────┐
 │   Orchestrator (Groq Llama 3.3)   │  ← classifies intent, detects collaboration
-│   routes to 1 or 2 agents          │
+│   routes to 1 or 2 agents         │
 └──────┬──────┬──────┬──────┬───────┘
        │      │      │      │
        ▼      ▼      ▼      ▼
@@ -294,4 +302,4 @@ MIT License — free to use, modify, and share.
 ## 🙋 Author
 
 **Sanchit Yadav**
-[LinkedIn](https://linkedin.com/in/sanchit-yadav-b70830266) • [GitHub](https://github.com/sanchit-yadav)
+[LinkedIn](https://www.linkedin.com/in/sanchit-yadav-26a849341/) • [GitHub](https://github.com/sanchit-yadav)
