@@ -1,11 +1,12 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
 from core.memory import (
     init_db, save_history, load_history, clear_history,
     get_action_logs, get_error_logs, get_stats
 )
 from core.orchestrator import Orchestrator
+from core.rate_limiter import check_rate_limit, record_request, get_usage
+from core.guardrails import validate_user_input
 
 st.set_page_config(
     page_title = "Multi-Agent Assistant",
@@ -25,50 +26,35 @@ st.markdown("""
     padding: 16px 20px;
     text-align: center;
 }
-.metric-value {
-    font-size: 28px;
-    font-weight: 700;
-    color: #1a1a2e;
-}
+.metric-value { font-size: 28px; font-weight: 700; color: #1a1a2e; }
 .metric-label {
-    font-size: 12px;
-    color: #666;
-    margin-top: 2px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    font-size: 12px; color: #666; margin-top: 2px;
+    text-transform: uppercase; letter-spacing: 0.05em;
 }
-.status-success {
-    background:#d4edda; color:#155724;
-    padding:2px 8px; border-radius:10px;
-    font-size:11px; font-weight:600;
+.status-success { background:#d4edda; color:#155724; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+.status-error   { background:#f8d7da; color:#721c24; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+.collab-card {
+    border-left: 3px solid #7F77DD;
+    background: #f8f7ff;
+    padding: 10px 14px;
+    border-radius: 6px;
+    margin-bottom: 10px;
 }
-.status-error {
-    background:#f8d7da; color:#721c24;
-    padding:2px 8px; border-radius:10px;
-    font-size:11px; font-weight:600;
-}
-.status-resolved {
-    background:#cce5ff; color:#004085;
-    padding:2px 8px; border-radius:10px;
-    font-size:11px; font-weight:600;
-}
-.provider-badge {
-    background:#e9ecef; color:#495057;
-    padding:2px 8px; border-radius:10px;
-    font-size:11px;
+.usage-badge {
+    display:inline-block; background:#eef0ff; color:#4338ca;
+    padding:3px 10px; border-radius:12px; font-size:12px; font-weight:600;
 }
 </style>
-Note: Gmail/Calendar tools can only be used after authenticating with your own API keys. Developer keys have been restricted to prevent exposure of personal data.
-For setup instructions, please refer to <b>README.md</b>.
 """, unsafe_allow_html=True)
 
 # ── Agent metadata ─────────────────────────────────────────────────────────────
 AGENT_META = {
-    "auto":     {"icon": "✨", "label": "Auto-Route",  "color": "#7F77DD"},
-    "email":    {"icon": "📧", "label": "Email",       "color": "#185FA5"},
-    "research": {"icon": "🔍", "label": "Research",    "color": "#534AB7"},
-    "calendar": {"icon": "📅", "label": "Calendar",    "color": "#3B6D11"},
-    "travel":   {"icon": "✈️", "label": "Travel",      "color": "#854F0B"},
+    "auto":        {"icon": "✨", "label": "Auto-Route",   "color": "#7F77DD"},
+    "collaborate": {"icon": "🤝", "label": "Collaborate",  "color": "#C0392B"},
+    "email":       {"icon": "📧", "label": "Email",        "color": "#185FA5"},
+    "research":    {"icon": "🔍", "label": "Research",     "color": "#534AB7"},
+    "calendar":    {"icon": "📅", "label": "Calendar",     "color": "#3B6D11"},
+    "travel":      {"icon": "✈️", "label": "Travel",       "color": "#854F0B"},
 }
 
 # ── Init ───────────────────────────────────────────────────────────────────────
@@ -80,10 +66,17 @@ def get_orchestrator():
         agent.history = load_history(name)
     return orch
 
-def get_agent_key(orch, agent) -> str:
-    return next((k for k, v in orch.agents.items() if v == agent), "research")
-
 orch = get_orchestrator()
+
+# ── Demo / API key notice ───────────────────────────────────────────────────────
+st.info(
+    "ℹ️ **Demo notice:** This public deployment runs without the developer's personal "
+    "Gmail/Calendar credentials for privacy and safety reasons. The Email and Calendar "
+    "agents will draft content correctly, but real send/create actions require **your own** "
+    "`GROQ_API_KEY`, `GEMINI_API_KEY`, `TAVILY_API_KEY`, and Google OAuth `credentials.json` — "
+    "see the [GitHub README](https://github.com/) to run it locally with full functionality.",
+    icon="ℹ️",
+)
 
 # ── Top navigation ─────────────────────────────────────────────────────────────
 tab_chat, tab_logs = st.tabs(["💬  Chat", "📊  Logs Dashboard"])
@@ -98,13 +91,27 @@ with tab_chat:
         st.markdown("### 🤖 Agents")
         mode = st.radio(
             label            = "Agent",
-            options          = ["auto", "email", "research", "calendar", "travel"],
+            options          = ["auto", "collaborate", "email", "research", "calendar", "travel"],
             format_func      = lambda x: f"{AGENT_META[x]['icon']}  {AGENT_META[x]['label']}",
             label_visibility = "collapsed",
         )
         st.markdown("---")
 
-        if mode != "auto":
+        # Usage / rate limit badge
+        usage = get_usage()
+        st.markdown(
+            f'<span class="usage-badge">⚡ {usage["used"]}/{usage["limit"]} messages used this session</span>',
+            unsafe_allow_html=True,
+        )
+        st.progress(usage["used"] / usage["limit"] if usage["limit"] else 0)
+
+        st.markdown("---")
+
+        if mode == "collaborate":
+            st.caption("🤝 Two agents work together — e.g. Research finds info, Calendar acts on it.")
+        elif mode == "auto":
+            st.caption("Groq Llama 3.3 routes to the single best agent automatically.")
+        else:
             agent = orch.agents[mode]
             st.caption(f"🔧 **Provider:** {agent.provider}")
             st.caption(f"💬 **Memory:** {len(agent.history)} messages")
@@ -113,22 +120,24 @@ with tab_chat:
                 clear_history(mode)
                 st.session_state[f"messages_{mode}"] = []
                 st.rerun()
-        else:
-            st.caption("Gemini 2.5 Flash routes to the best agent automatically.")
 
         st.markdown("---")
         st.markdown("**📖 Tips:**")
         st.markdown("- Type anything in Auto mode")
+        st.markdown("- Try **Collaborate** mode: *'Research best time to visit Japan and add a calendar reminder'*")
         st.markdown("- Responses stream in real time ⚡")
-        st.markdown("- Gmail/Calendar open browser on first use")
-        st.markdown("- Errors auto-fallback to backup provider")
+        st.markdown("- Errors auto-fallback to a backup provider 🛡️")
+        st.markdown("- Inputs are validated before reaching any agent or API")
         st.markdown("- Check **Logs Dashboard** tab for details")
 
     with col_main:
         meta = AGENT_META[mode]
         if mode == "auto":
             st.markdown(f"## {meta['icon']} Auto-Route Mode")
-            st.caption("Gemini 2.5 Flash picks the best agent for every message.")
+            st.caption("Picks the single best agent for your message.")
+        elif mode == "collaborate":
+            st.markdown(f"## {meta['icon']} Collaborate Mode")
+            st.caption("Two agents may work together — one gathers info, the other acts on it.")
         else:
             agent = orch.agents[mode]
             st.markdown(f"## {meta['icon']} {agent.name}")
@@ -140,25 +149,18 @@ with tab_chat:
         if session_key not in st.session_state:
             st.session_state[session_key] = []
 
-        # ── Scroll-to-bottom JS — runs every render ───────────────────────────
+        # ── Scroll-to-bottom JS ───────────────────────────────────────────────
         st.markdown("""
         <script>
         function scrollToBottom() {
             const chatContainer = window.parent.document.querySelector(
                 '[data-testid="stChatMessageContainer"]'
             );
-            if (chatContainer) {
-                chatContainer.scrollTop = chatContainer.scrollHeight;
-            }
-            // Also scroll the main block container
-            const main = window.parent.document.querySelector(
-                'section[data-testid="stMain"]'
-            );
+            if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
+            const main = window.parent.document.querySelector('section[data-testid="stMain"]');
             if (main) main.scrollTop = main.scrollHeight;
-
             window.parent.scrollTo(0, window.parent.document.body.scrollHeight);
         }
-        // Run immediately and after a short delay to catch late renders
         scrollToBottom();
         setTimeout(scrollToBottom, 300);
         setTimeout(scrollToBottom, 700);
@@ -172,16 +174,14 @@ with tab_chat:
                 with st.chat_message(msg["role"]):
                     st.markdown(msg["content"])
 
-        # Chat input — always rendered at the bottom by Streamlit
+        # Chat input
         if prompt := st.chat_input("Type your message..."):
-
-            # Save user message and rerun so it appears before we stream
             st.session_state[session_key].append({"role": "user", "content": prompt})
             st.session_state["_pending_prompt"] = prompt
             st.session_state["_pending_mode"]   = mode
             st.rerun()
 
-        # ── Process pending prompt (after rerun, input is now at bottom) ──────
+        # ── Process pending prompt ────────────────────────────────────────────
         if st.session_state.get("_pending_prompt") and \
            st.session_state.get("_pending_mode") == mode:
 
@@ -191,13 +191,70 @@ with tab_chat:
             with chat_container:
                 with st.chat_message("assistant"):
                     placeholder = st.empty()
+
+                    # ── 1. Rate limit check ──────────────────────────────────
+                    allowed, rl_message = check_rate_limit()
+                    if not allowed:
+                        placeholder.warning(rl_message)
+                        st.session_state[session_key].append(
+                            {"role": "assistant", "content": rl_message}
+                        )
+                        st.stop()
+
+                    # ── 2. Input validation / guardrails ─────────────────────
+                    is_valid, clean_prompt, guard_message = validate_user_input(prompt)
+                    if not is_valid:
+                        placeholder.warning(guard_message)
+                        st.session_state[session_key].append(
+                            {"role": "assistant", "content": guard_message}
+                        )
+                        record_request()
+                        st.stop()
+
                     streamed    = ""
                     agent_label = ""
 
                     try:
-                        if mode == "auto":
+                        # ── COLLABORATE MODE ─────────────────────────────────
+                        if mode == "collaborate":
+                            with st.spinner("🤝 Coordinating agents..."):
+                                result = orch.collaborate(clean_prompt)
+
+                            if result["collaborated"]:
+                                rendered = (
+                                    f'<div class="collab-card">'
+                                    f'<b>Step 1 — {result["step1_agent"]}</b><br>{result["step1_reply"]}'
+                                    f'</div>'
+                                    f'<div class="collab-card">'
+                                    f'<b>Step 2 — {result["step2_agent"]}</b><br>{result["step2_reply"]}'
+                                    f'</div>'
+                                )
+                                placeholder.markdown(rendered, unsafe_allow_html=True)
+                                final_text = (
+                                    f"**Step 1 — {result['step1_agent']}**\n\n{result['step1_reply']}\n\n"
+                                    f"**Step 2 — {result['step2_agent']}**\n\n{result['step2_reply']}"
+                                )
+                            else:
+                                placeholder.markdown(
+                                    f"**{result['step1_agent']}**\n\n{result['step1_reply']}"
+                                )
+                                final_text = f"**{result['step1_agent']}**\n\n{result['step1_reply']}"
+
+                            save_history("research", orch.agents["research"].history)
+                            save_history("calendar", orch.agents["calendar"].history)
+                            save_history("email",    orch.agents["email"].history)
+                            save_history("travel",   orch.agents["travel"].history)
+
+                            st.session_state[session_key].append(
+                                {"role": "assistant", "content": final_text}
+                            )
+                            record_request()
+                            st.rerun()
+
+                        # ── AUTO-ROUTE MODE ──────────────────────────────────
+                        elif mode == "auto":
                             with st.spinner("🧭 Routing to best agent..."):
-                                detected_name, reason = orch.detect_agent(prompt)
+                                detected_name, reason = orch.detect_agent(clean_prompt)
                                 if detected_name not in orch.agents:
                                     detected_name = "research"
                                 active_agent = orch.agents[detected_name]
@@ -207,32 +264,47 @@ with tab_chat:
                                     f"Routed to **{active_agent.name}** — {reason}*\n\n"
                                 )
                                 placeholder.markdown(agent_label + "▋")
+
+                            for token in active_agent.chat_stream(clean_prompt):
+                                streamed += token
+                                placeholder.markdown(agent_label + streamed + "▋")
+
+                            placeholder.markdown(agent_label + streamed)
+                            save_history(key, active_agent.history)
+                            st.session_state[session_key].append({
+                                "role": "assistant", "content": agent_label + streamed
+                            })
+                            record_request()
+                            st.rerun()
+
+                        # ── SINGLE AGENT MODE ────────────────────────────────
                         else:
                             active_agent = orch.agents[mode]
                             key          = mode
 
-                        for token in active_agent.chat_stream(prompt):
-                            streamed    += token
-                            placeholder.markdown(agent_label + streamed + "▋")
+                            for token in active_agent.chat_stream(clean_prompt):
+                                streamed += token
+                                placeholder.markdown(streamed + "▋")
 
-                        placeholder.markdown(agent_label + streamed)
-                        save_history(key, active_agent.history)
-                        st.session_state[session_key].append({
-                            "role": "assistant", "content": agent_label + streamed
-                        })
+                            placeholder.markdown(streamed)
+                            save_history(key, active_agent.history)
+                            st.session_state[session_key].append({
+                                "role": "assistant", "content": streamed
+                            })
+                            record_request()
+                            st.rerun()
 
                     except FileNotFoundError as e:
                         err = f"❌ **Setup required:** {str(e)}"
                         placeholder.error(err)
                         st.session_state[session_key].append({"role": "assistant", "content": err})
+                        record_request()
 
                     except Exception as e:
                         err = f"⚠️ **Unexpected error:** {str(e)}"
                         placeholder.error(err)
                         st.session_state[session_key].append({"role": "assistant", "content": err})
-
-            # Rerun one final time so the input box re-anchors below all messages
-            st.rerun()
+                        record_request()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2 — LOGS DASHBOARD
@@ -241,7 +313,6 @@ with tab_logs:
     st.markdown("## 📊 Logs Dashboard")
     st.caption("Real-time view of all agent actions, errors, and system health.")
 
-    # Refresh button
     col_r1, col_r2 = st.columns([5, 1])
     with col_r2:
         if st.button("🔄 Refresh", use_container_width=True):
@@ -249,60 +320,37 @@ with tab_logs:
 
     st.markdown("---")
 
-    # ── Stats row ─────────────────────────────────────────────────────────────
     stats = get_stats()
-
     total_actions  = sum(stats.get("actions_per_agent", {}).values())
     total_errors   = stats.get("total_errors", 0)
     resolved       = stats.get("resolved_errors", 0)
     total_messages = sum(stats.get("messages_per_agent", {}).values())
     success_count  = stats.get("status_counts", {}).get("success", 0)
-    error_count    = stats.get("status_counts", {}).get("error", 0)
     success_rate   = (
-        f"{round(success_count / total_actions * 100)}%"
-        if total_actions > 0 else "N/A"
+        f"{round(success_count / total_actions * 100)}%" if total_actions > 0 else "N/A"
     )
 
     c1, c2, c3, c4, c5 = st.columns(5)
-    with c1:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-value">{total_actions}</div>
-            <div class="metric-label">Total Actions</div>
-        </div>""", unsafe_allow_html=True)
-    with c2:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-value">{success_rate}</div>
-            <div class="metric-label">Success Rate</div>
-        </div>""", unsafe_allow_html=True)
-    with c3:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-value">{total_errors}</div>
-            <div class="metric-label">Total Errors</div>
-        </div>""", unsafe_allow_html=True)
-    with c4:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-value" style="color:#28a745">{resolved}</div>
-            <div class="metric-label">Auto-Resolved</div>
-        </div>""", unsafe_allow_html=True)
-    with c5:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-value">{total_messages}</div>
-            <div class="metric-label">Total Messages</div>
-        </div>""", unsafe_allow_html=True)
+    for col, value, label, color in [
+        (c1, total_actions, "Total Actions", "#1a1a2e"),
+        (c2, success_rate, "Success Rate", "#1a1a2e"),
+        (c3, total_errors, "Total Errors", "#1a1a2e"),
+        (c4, resolved, "Auto-Resolved", "#28a745"),
+        (c5, total_messages, "Total Messages", "#1a1a2e"),
+    ]:
+        with col:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-value" style="color:{color}">{value}</div>
+                <div class="metric-label">{label}</div>
+            </div>""", unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Agent activity bar chart ───────────────────────────────────────────────
     actions_data = stats.get("actions_per_agent", {})
     msg_data     = stats.get("messages_per_agent", {})
 
     col_chart1, col_chart2 = st.columns(2)
-
     with col_chart1:
         st.markdown("#### ⚡ Actions per Agent")
         if actions_data:
@@ -324,35 +372,24 @@ with tab_logs:
             st.info("No conversations yet.")
 
     st.markdown("---")
-
-    # ── Action log table ──────────────────────────────────────────────────────
     st.markdown("#### 📋 Action Log")
 
     col_f1, col_f2 = st.columns([2, 1])
     with col_f1:
         agent_filter = st.selectbox(
-            "Filter by agent",
-            ["all", "email", "research", "calendar", "travel"],
+            "Filter by agent", ["all", "email", "research", "calendar", "travel"],
             label_visibility="collapsed",
         )
     with col_f2:
-        log_limit = st.selectbox(
-            "Rows", [25, 50, 100], label_visibility="collapsed"
-        )
+        log_limit = st.selectbox("Rows", [25, 50, 100], label_visibility="collapsed")
 
     action_logs = get_action_logs(
-        agent=agent_filter if agent_filter != "all" else None,
-        limit=log_limit
+        agent=agent_filter if agent_filter != "all" else None, limit=log_limit
     )
 
     if action_logs:
         rows = []
         for log in action_logs:
-            status_html = (
-                f'<span class="status-success">✅ success</span>'
-                if log["status"] == "success"
-                else f'<span class="status-error">❌ error</span>'
-            )
             rows.append({
                 "Timestamp": log["timestamp"][:16].replace("T", " "),
                 "Agent":     f"{AGENT_META.get(log['agent'], {}).get('icon', '🤖')} {log['agent']}",
@@ -362,20 +399,14 @@ with tab_logs:
             })
         df = pd.DataFrame(rows)
 
-        # Color rows by status
         def highlight_status(row):
-            if row["Status"] == "error":
-                return ["background-color: #fff5f5"] * len(row)
-            return [""] * len(row)
+            return ["background-color: #fff5f5"] * len(row) if row["Status"] == "error" else [""] * len(row)
 
-        styled = df.style.apply(highlight_status, axis=1)
-        st.dataframe(styled, use_container_width=True, hide_index=True)
+        st.dataframe(df.style.apply(highlight_status, axis=1), use_container_width=True, hide_index=True)
     else:
         st.info("No actions logged yet. Start chatting to see activity here.")
 
     st.markdown("---")
-
-    # ── Error log table ────────────────────────────────────────────────────────
     st.markdown("#### 🛡️ Error & Fallback Log")
     st.caption("Shows provider failures and whether the fallback resolved them automatically.")
 
@@ -384,72 +415,58 @@ with tab_logs:
     if error_logs:
         rows = []
         for log in error_logs:
-            resolved_label = "✅ Resolved" if log["resolved"] else "❌ Unresolved"
             rows.append({
                 "Timestamp": log["timestamp"][:16].replace("T", " "),
                 "Agent":     log["agent"],
-                "Failed Provider":   log["provider"],
-                "Fallback Used":     log["fallback"] if log["fallback"] else "none",
-                "Resolved":          resolved_label,
-                "Error":             log["error"][:70] + ("..." if len(log["error"]) > 70 else ""),
+                "Failed Provider": log["provider"],
+                "Fallback Used":   log["fallback"] or "none",
+                "Resolved":        "✅ Resolved" if log["resolved"] else "❌ Unresolved",
+                "Error":           log["error"][:70] + ("..." if len(log["error"]) > 70 else ""),
             })
         df_err = pd.DataFrame(rows)
 
         def highlight_resolved(row):
             if "Unresolved" in row["Resolved"]:
                 return ["background-color: #fff5f5"] * len(row)
-            if "Resolved" in row["Resolved"]:
-                return ["background-color: #f0fff4"] * len(row)
-            return [""] * len(row)
+            return ["background-color: #f0fff4"] * len(row)
 
-        styled_err = df_err.style.apply(highlight_resolved, axis=1)
-        st.dataframe(styled_err, use_container_width=True, hide_index=True)
+        st.dataframe(df_err.style.apply(highlight_resolved, axis=1), use_container_width=True, hide_index=True)
 
-        # Summary
         unresolved = sum(1 for l in error_logs if not l["resolved"])
         if unresolved == 0:
             st.success(f"✅ All {len(error_logs)} errors were automatically resolved via fallback.")
         else:
-            st.warning(
-                f"⚠️ {unresolved} error(s) could not be auto-resolved. "
-                "Check your API keys and network connection."
-            )
+            st.warning(f"⚠️ {unresolved} error(s) could not be auto-resolved.")
     else:
         st.success("✅ No errors logged. All systems healthy!")
 
     st.markdown("---")
-
-    # ── Clear logs section ────────────────────────────────────────────────────
     st.markdown("#### 🗑️ Manage Logs")
     col_cl1, col_cl2, col_cl3 = st.columns(3)
 
+    import sqlite3
+
     with col_cl1:
         if st.button("Clear Action Logs", use_container_width=True):
-            import sqlite3
             conn = sqlite3.connect("memory.db")
             conn.execute("DELETE FROM actions_log")
-            conn.commit()
-            conn.close()
+            conn.commit(); conn.close()
             st.success("Action logs cleared.")
             st.rerun()
 
     with col_cl2:
         if st.button("Clear Error Logs", use_container_width=True):
-            import sqlite3
             conn = sqlite3.connect("memory.db")
             conn.execute("DELETE FROM error_log")
-            conn.commit()
-            conn.close()
+            conn.commit(); conn.close()
             st.success("Error logs cleared.")
             st.rerun()
 
     with col_cl3:
         if st.button("Clear All Logs", use_container_width=True, type="primary"):
-            import sqlite3
             conn = sqlite3.connect("memory.db")
             conn.execute("DELETE FROM actions_log")
             conn.execute("DELETE FROM error_log")
-            conn.commit()
-            conn.close()
+            conn.commit(); conn.close()
             st.success("All logs cleared.")
             st.rerun()

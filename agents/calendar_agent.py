@@ -2,6 +2,7 @@ import json
 from typing import Generator
 from core.fallback import call_with_fallback, call_stream_with_fallback
 from core.memory import log_action, log_error
+from core.guardrails import validate_date_format, validate_time_format
 from tools.calendar_tool import create_event, list_events
 
 SYSTEM_PROMPT = """You are a Calendar Agent connected to real Google Calendar.
@@ -31,6 +32,25 @@ class CalendarAgent:
             action = data.get("action")
 
             if action == "create":
+                event_date = data.get("date", "")
+                event_time = data.get("time", "")
+
+                if not validate_date_format(event_date):
+                    log_action("calendar", "create_event",
+                               f"Blocked — invalid date format: {event_date}", "error")
+                    return (
+                        f"⚠️ '{event_date}' isn't a valid date. Please provide a date "
+                        f"in YYYY-MM-DD format (e.g. 2025-07-01)."
+                    )
+
+                if not validate_time_format(event_time):
+                    log_action("calendar", "create_event",
+                               f"Blocked — invalid time format: {event_time}", "error")
+                    return (
+                        f"⚠️ '{event_time}' isn't a valid time. Please provide a time "
+                        f"in 24-hour HH:MM format (e.g. 14:30)."
+                    )
+
                 try:
                     result = create_event(
                         title          = data["title"],

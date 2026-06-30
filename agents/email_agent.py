@@ -2,6 +2,7 @@ import json
 from typing import Generator
 from core.fallback import call_with_fallback, call_stream_with_fallback
 from core.memory import log_action, log_error
+from core.guardrails import validate_email_address
 from tools.gmail_tool import send_email, read_emails
 
 SYSTEM_PROMPT = """You are a professional Email Agent connected to real Gmail.
@@ -35,6 +36,14 @@ class EmailAgent:
             action = data.get("action")
 
             if action == "send":
+                recipient = data.get("to", "")
+                if not validate_email_address(recipient):
+                    log_action("email", "send_email",
+                               f"Blocked — invalid email format: {recipient}", "error")
+                    return (
+                        f"⚠️ '{recipient}' doesn't look like a valid email address. "
+                        f"Please provide a correctly formatted email (e.g. name@example.com)."
+                    )
                 try:
                     result = send_email(data["to"], data["subject"], data["body"])
                     log_action("email", "send_email",
